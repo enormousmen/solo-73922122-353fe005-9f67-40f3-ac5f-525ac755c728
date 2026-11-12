@@ -62,6 +62,13 @@
   }
   .serve .dot { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; box-shadow: 0 0 0 3px #d1fadf; }
   .serve b { color: var(--ink); font-weight: 700; }
+  .topnav { display: flex; align-items: center; gap: 6px; }
+  .nav-link {
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 650;
+    color: var(--muted); text-decoration: none; border: 1px solid transparent;
+  }
+  .nav-link:hover { color: var(--ink); background: #f2f4f7; }
+  .nav-link.active { color: var(--teal); background: var(--teal-soft); border-color: #b7e4dc; }
   .ghost-btn {
     border: 1px solid var(--line); background: #fff; border-radius: 8px;
     padding: 5px 10px; color: var(--muted);
@@ -300,6 +307,10 @@
       <p>两套采购系统 · 同名企业审核 · 判定与分组原子入仓</p>
     </div>
   </div>
+  <nav class="topnav">
+    <a class="nav-link active" href="/">审校首页</a>
+    <a class="nav-link" href="/writeoffs">采购核销</a>
+  </nav>
   <div class="serve">
     <span class="dot"></span>
     <span>服务进程</span><b id="instance">—</b>
@@ -353,7 +364,8 @@
             <b>同一企业</b>：关系可传递，所有由“同一企业”相连的记录归入同一分组。<br>
             <b>不同企业</b>：两端永远不得进入同一分组；若合并会违反该约束，系统会在预览时拒绝。<br>
             <b>撤回</b>：只移除该一条判定，其余判定继续生效，分组自动重算。<br>
-            <b>确认校验</b>：确认时会重新读取所涉原组成员及其关联判定；若与预览不一致则拒绝，无关分组的变化不影响确认。
+            <b>确认校验</b>：确认时会重新读取所涉原组成员及其关联判定；若与预览不一致则拒绝，无关分组的变化不影响确认。<br>
+            <b>核销约束</b>：已保存核销的双方供应商必须始终同组；若关系变更（如撤回“同一企业”）会让核销跨组，预览与确认都会拒绝并指出涉及方案，需先在<a href="/writeoffs">采购核销页</a>解除相关核销。
           </div>
         </div>
       </section>
@@ -491,6 +503,12 @@
     `<span class="mono small">${esc(record.source_code)}</span> ${esc(record.name)}`;
 
   const shortKey = (key) => (key ? esc(key.slice(0, 11)) + "…" : "—");
+
+  const fmtCents = (cents) =>
+    "¥" + (Number(cents || 0) / 100).toLocaleString("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
 
   const relationLabel = (relation) => relation === "same" ? "同一企业" : "不同企业";
   const relationPill = (relation) =>
@@ -810,12 +828,32 @@
         <span class="mono small">${esc(op.record_b.source)} ${esc(op.record_b.source_code)}</span>`;
     }
     const decision = op.decision;
+    if (!decision) {
+      return `撤回判定 <span class="mono small">#${esc(preview.action?.decision_id ?? "?")}</span>`;
+    }
     return `撤回 ${relationLabel(decision.relation)} 判定
       <span class="mono small">#${decision.id}</span>：
       <span class="mono small">${esc(decision.record_a.source_code)}</span>
       <span class="muted">↔</span>
       <span class="mono small">${esc(decision.record_b.source_code)}</span>
       <span class="muted small">（${esc(decision.record_a.name)}）</span>`;
+  }
+
+  function writeoffBlock(writeoffs, schemes) {
+    if (!writeoffs || !writeoffs.length) return "";
+    return `<div class="section-title">受影响的核销明细
+        <span class="hint">涉及方案：${(schemes || []).map(esc).join("、")}</span><span class="line"></span></div>
+      <div class="evidence-list">${writeoffs.map((item) => `
+        <div class="evidence-row">
+          <span class="pill warn">${esc(item.scheme_id)}</span>
+          <span class="mono small">${esc(item.order_id)}</span>
+          <span class="muted">×</span>
+          <span class="mono small">${esc(item.invoice_id)}</span>
+          <span class="muted small">${fmtCents(item.amount_cents)}</span>
+        </div>`).join("")}</div>
+      <div class="summary-box" style="margin-top:12px;background:#fff7ed;border-color:#f5d9a8;color:#7a4a06">
+        请先到<a href="/writeoffs">采购核销页</a>解除上述方案的核销明细，再重新预览该关系变更。
+      </div>`;
   }
 
   function conflictBlock(conflict) {
@@ -835,7 +873,8 @@
           <div class="step"><span class="pill neutral">${index + 1}</span>
             ${recInline(item.record_a)} ↔ ${recInline(item.record_b)}
             <span class="muted small">#${item.id}</span></div>`).join("")}</div>` : ""}
-    </div>`;
+    </div>
+    ${writeoffBlock(conflict.writeoffs, conflict.schemes)}`;
   }
 
   function renderPreview(preview) {
@@ -914,18 +953,29 @@
   function showStale(payload) {
     const error = payload.error || {};
     stateBox.currentPreview = null;
-    $("#modalEyebrow").textContent = "操作预览 · 已失效";
-    $("#modalTitle").textContent = "预览已失效，需要重新预览";
+    const isWriteoffBlock = error.code === "writeoff_crosses_groups";
+    $("#modalEyebrow").textContent = isWriteoffBlock ? "操作确认 · 被核销拦截" : "操作预览 · 已失效";
+    $("#modalTitle").textContent = isWriteoffBlock
+      ? "确认被拒绝：核销会被拆到不同分组"
+      : "预览已失效，需要重新预览";
+    const titles = {
+      preview_not_pending: "预览不可再次确认",
+      preview_stale: "预览与当前数据不一致",
+      writeoff_crosses_groups: "拟分组会让已有核销跨组",
+    };
     $("#modalBody").innerHTML = `<div class="alert warn">
-      <h3>${esc(error.code === "preview_not_pending" ? "预览不可再次确认" : "预览与当前数据不一致")}</h3>
+      <h3>${esc(titles[error.code] || "操作被拒绝")}</h3>
       <p>${esc(error.message || "所涉分组或判定已变化，请重新预览。")}</p>
       <div class="code">${esc(error.code || "preview_stale")}</div>
     </div>
+    ${writeoffBlock(error.writeoffs, error.schemes)}
     <div class="summary-box" style="margin-top:14px;background:#f8fafc;border-color:#e4e7ec;color:#475467">
       系统已重新读取共享数据库。未保存任何判定或分组变更。
     </div>`;
     $("#modalFoot").innerHTML = `
-      <div class="note">请重新预览，确认当前分组后再保存。</div>
+      <div class="note">${isWriteoffBlock
+        ? "解除上述核销后，可再次点击确认（预览仍然有效），或重新预览。"
+        : "请重新预览，确认当前分组后再保存。"}</div>
       <div class="decision-actions">
         <button class="btn btn-outline" data-close-modal>关闭</button>
         ${stateBox.currentAction ? `<button class="btn btn-primary" data-repreview>重新预览</button>` : ""}

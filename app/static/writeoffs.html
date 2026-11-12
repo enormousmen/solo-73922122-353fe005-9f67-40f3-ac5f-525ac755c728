@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>采购核销台 · 订单发票核销</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --ink: #17202a;
+    --muted: #667085;
+    --line: #e4e7ec;
+    --teal: #0f766e;
+    --teal-soft: #e8f5f2;
+    --red: #b42318;
+    --red-soft: #fef1f0;
+    --amber: #a15c07;
+    --amber-soft: #fff7e6;
+    --blue: #175cd3;
+    --blue-soft: #eff4ff;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 6px 18px rgba(16, 24, 40, .05);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 20px; padding: 16px 28px;
+    background: rgba(255,255,255,.9);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .mark {
+    width: 42px; height: 42px; border-radius: 12px;
+    display: grid; place-items: center;
+    background: linear-gradient(140deg, #175cd3, #1849a9);
+    color: #fff; font-weight: 800; font-size: 19px;
+    letter-spacing: .5px;
+  }
+  .brand h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+  .topnav { display: flex; align-items: center; gap: 6px; }
+  .nav-link {
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 650;
+    color: var(--muted); text-decoration: none; border: 1px solid transparent;
+  }
+  .nav-link:hover { color: var(--ink); background: #f2f4f7; }
+  .nav-link.active { color: var(--blue); background: var(--blue-soft); border-color: #bfd4fe; }
+  .serve {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px;
+    background: #fff; color: var(--muted); font-size: 12.5px;
+  }
+  .serve .dot { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; box-shadow: 0 0 0 3px #d1fadf; }
+  .serve b { color: var(--ink); font-weight: 700; }
+  .ghost-btn {
+    border: 1px solid var(--line); background: #fff; border-radius: 8px;
+    padding: 5px 10px; color: var(--muted);
+  }
+  .ghost-btn:hover { color: var(--ink); border-color: #cfd4dc; }
+
+  main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 80px; }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .stat .label { color: var(--muted); font-size: 12px; }
+  .stat .value { font-size: 24px; font-weight: 750; letter-spacing: -.5px; margin-top: 2px; }
+  .stat .value small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 5px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); margin-bottom: 18px; overflow: hidden;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 16px 20px; border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { margin: 0; font-size: 16px; }
+  .panel-head .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .panel-body { padding: 18px 20px; }
+
+  .btn {
+    border: 1px solid transparent; border-radius: 9px; padding: 9px 15px;
+    font-weight: 650; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #134bb5; }
+  .btn-danger { background: #fff; color: var(--red); border-color: #f3b8b3; }
+  .btn-danger:hover { background: var(--red-soft); }
+  .btn-outline { background: #fff; border-color: #cfd4dc; color: var(--ink); }
+  .btn-outline:hover { background: #f9fafb; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .tiny-btn {
+    border: 1px solid var(--line); background: #fff; border-radius: 7px;
+    padding: 4px 9px; font-size: 11.5px; color: var(--ink);
+  }
+  .tiny-btn:hover { border-color: #cfd4dc; background: #f9fafb; }
+  .tiny-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  table.data { width: 100%; border-collapse: collapse; }
+  table.data th, table.data td { padding: 10px 12px; border-bottom: 1px solid #f0f2f5; text-align: left; vertical-align: top; }
+  table.data th { font-size: 11.5px; color: var(--muted); font-weight: 650; text-transform: uppercase; letter-spacing: .3px; background: #fafbfc; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data tbody tr:hover { background: #fcfcfd; }
+  .table-scroll { max-height: 460px; overflow: auto; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 650;
+    white-space: nowrap;
+  }
+  .pill.same { background: var(--teal-soft); color: var(--teal); }
+  .pill.diff { background: var(--red-soft); color: var(--red); }
+  .pill.warn { background: var(--amber-soft); color: var(--amber); }
+  .pill.neutral { background: #f2f4f7; color: #475467; }
+  .pill.info { background: var(--blue-soft); color: var(--blue); }
+
+  .scheme-bar {
+    display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px; border-bottom: 1px solid var(--line); background: #fafbfc;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .field input, .field select {
+    padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 9px;
+    background: #fff; outline: none; min-width: 220px;
+  }
+  .field input:focus, .field select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+
+  .entry-table select, .entry-table input {
+    width: 100%; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 8px;
+    background: #fff; outline: none; font-size: 13px;
+  }
+  .entry-table select:focus, .entry-table input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+  .row-hint { font-size: 11.5px; margin-top: 4px; color: var(--muted); }
+  .row-hint.bad { color: var(--red); font-weight: 600; }
+  .row-hint.good { color: var(--teal); }
+
+  .editor-error {
+    margin: 0 20px 16px; padding: 12px 14px; border-radius: 10px;
+    background: var(--red-soft); border: 1px solid #f3b8b3; color: #7a271a; font-size: 13px;
+  }
+  .editor-error .code { font-family: ui-monospace, monospace; font-size: 11px; opacity: .7; margin-top: 4px; }
+
+  .balance-bar { height: 7px; border-radius: 99px; background: #eef1f5; overflow: hidden; min-width: 90px; }
+  .balance-bar > span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #175cd3, #5ea3f7); }
+  .balance-bar.full > span { background: linear-gradient(90deg, #0f766e, #34d399); }
+
+  .empty {
+    padding: 26px; text-align: center; color: var(--muted); border: 1px dashed var(--line);
+    border-radius: 10px; background: #fbfcfd; font-size: 13px;
+  }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .doc-grid > section + section { border-left: 1px solid var(--line); }
+  .doc-col-head { padding: 12px 20px; border-bottom: 1px solid var(--line); background: #fafbfc; font-weight: 700; font-size: 13.5px; display: flex; justify-content: space-between; align-items: center; }
+
+  .scheme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+  .scheme-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 15px; background: #fff; position: relative; }
+  .scheme-card::before {
+    content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
+    border-radius: 12px 0 0 12px; background: linear-gradient(#175cd3, #7db4fa);
+  }
+  .scheme-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .scheme-head b { font-size: 14.5px; }
+  .scheme-meta { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .scheme-entries { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+  .scheme-entries li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .scheme-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+  .overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(15, 23, 42, .52); backdrop-filter: blur(3px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 34px 18px; overflow: auto;
+  }
+  .modal {
+    width: min(880px, 100%); background: #fff; border-radius: 16px;
+    box-shadow: 0 24px 60px rgba(15,23,42,.28); overflow: hidden;
+    display: flex; flex-direction: column; max-height: calc(100vh - 68px);
+  }
+  .modal-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    padding: 18px 22px; border-bottom: 1px solid var(--line);
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .12em; color: var(--blue); font-weight: 750; text-transform: uppercase; }
+  .modal-head h2 { margin: 3px 0 0; font-size: 19px; line-height: 1.35; }
+  .modal-close {
+    border: 0; background: #f2f4f7; color: #475467; width: 32px; height: 32px;
+    border-radius: 8px; font-size: 19px; line-height: 1; flex: none;
+  }
+  .modal-close:hover { background: #e4e7ec; }
+  .modal-body { padding: 20px 22px; overflow: auto; }
+  .modal-foot {
+    padding: 14px 22px; border-top: 1px solid var(--line); background: #fafbfc;
+    display: flex; align-items: center; justify-content: flex-end; gap: 14px;
+  }
+
+  .doc-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .doc-summary .cell { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .doc-summary .cell .k { color: var(--muted); font-size: 11.5px; }
+  .doc-summary .cell .v { font-size: 18px; font-weight: 750; margin-top: 2px; }
+
+  .toast {
+    position: fixed; right: 22px; bottom: 22px; z-index: 200;
+    max-width: 460px; padding: 12px 15px; border-radius: 10px;
+    background: #101828; color: #fff; box-shadow: 0 12px 30px rgba(16,24,40,.3);
+    font-size: 13px; line-height: 1.5; transform: translateY(8px); opacity: 0;
+    transition: opacity .18s, transform .18s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { background: #7a271a; }
+  .toast.ok { background: #0b5d56; }
+
+  .loading { color: var(--muted); padding: 60px 20px; text-align: center; }
+  .example-hint { font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+  .example-hint b { color: var(--ink); }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .doc-grid { grid-template-columns: 1fr; }
+    .doc-grid > section + section { border-left: 0; border-top: 1px solid var(--line); }
+    .topbar { padding: 12px 16px; flex-wrap: wrap; }
+    main { padding: 16px; }
+    .brand p { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">核</div>
+    <div>
+      <h1>采购核销台</h1>
+      <p>ERP 订单 × 发票核销 · 未开票采购金额分析</p>
+    </div>
+  </div>
+  <nav class="topnav">
+    <a class="nav-link" href="/">审校首页</a>
+    <a class="nav-link active" href="/writeoffs">采购核销</a>
+  </nav>
+  <div class="serve">
+    <span class="dot"></span>
+    <span>服务进程</span><b id="instance">—</b>
+    <button class="ghost-btn" id="refreshBtn" title="重新读取共享数据库">刷新</button>
+  </div>
+</header>
+
+<main>
+  <div id="loading" class="loading">正在载入订单、发票与核销数据…</div>
+  <div id="app" hidden>
+    <section class="stats" id="stats"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>核销方案编辑</h2>
+          <div class="sub">按方案 ID 整批替换或清空核销明细；保存与清空均为原子操作，失败不改状态。</div>
+        </div>
+        <span class="pill neutral" id="editorStatus"></span>
+      </div>
+      <div class="scheme-bar">
+        <div class="field">
+          <label for="schemeId">方案 ID</label>
+          <input id="schemeId" list="schemeList" placeholder="输入新方案 ID，或选择已有方案" maxlength="64">
+          <datalist id="schemeList"></datalist>
+        </div>
+        <button class="btn btn-outline" id="loadSchemeBtn">载入方案</button>
+        <button class="btn btn-outline" id="newSchemeBtn">新建方案</button>
+        <span class="muted small">保存时先释放本方案旧明细，再校验全部单据的累计核销不超过单据金额。</span>
+      </div>
+      <div class="panel-body">
+        <div id="editorError" class="editor-error" hidden></div>
+        <table class="data entry-table">
+          <thead>
+            <tr>
+              <th style="width:34%">订单（采购订单）</th>
+              <th style="width:34%">发票</th>
+              <th style="width:16%">金额（分）</th>
+              <th style="width:8%"></th>
+            </tr>
+          </thead>
+          <tbody id="entryBody"></tbody>
+        </table>
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center">
+          <button class="btn btn-outline" id="addRowBtn">＋ 添加明细</button>
+          <span style="flex:1"></span>
+          <button class="btn btn-danger" id="clearSchemeBtn">清空该方案</button>
+          <button class="btn btn-primary" id="saveSchemeBtn">保存（整批替换）</button>
+        </div>
+        <div class="example-hint" style="margin-top:14px">
+          <b>同组约束</b>：每条明细的订单供应商与发票供应商必须属于当前同一分组（可在审校首页调整分组）。<br>
+          <b>累计约束</b>：同一张单据可跨方案分摊核销，但所有方案累计不得超过单据金额；整批替换按“释放本方案旧明细后”的整体结果校验。<br>
+          <b>拆分保护</b>：分组变更若会让已保存核销跨组，审校页的预览与确认都会拒绝并指出方案。
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>单据与余额</h2>
+          <div class="sub">首次载入的订单与发票（只读）；点击“明细”按单查看各方案核销与余额</div>
+        </div>
+        <span class="pill neutral" id="docCount"></span>
+      </div>
+      <div class="doc-grid">
+        <section>
+          <div class="doc-col-head">采购订单 <span class="pill info" id="orderCount"></span></div>
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr><th>单据 ID</th><th>供应商 / 分组</th><th class="num">总额</th><th class="num">已核销</th><th class="num">余额</th><th></th></tr>
+              </thead>
+              <tbody id="orderBody"></tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <div class="doc-col-head">发票 <span class="pill info" id="invoiceCount"></span></div>
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr><th>单据 ID</th><th>供应商 / 分组</th><th class="num">总额</th><th class="num">已核销</th><th class="num">余额</th><th></th></tr>
+              </thead>
+              <tbody id="invoiceBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>核销方案总览</h2>
+          <div class="sub">当前全部方案及其明细；同一张单据可出现在多个方案中</div>
+        </div>
+        <span class="pill neutral" id="schemeCount"></span>
+      </div>
+      <div class="panel-body">
+        <div id="schemeGrid" class="scheme-grid"></div>
+        <div id="noSchemes" class="empty" hidden>还没有核销方案。请在上方编辑器中新建方案并保存明细。</div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow" id="modalEyebrow">单据明细</div>
+        <h2 id="modalTitle">单据</h2>
+      </div>
+      <button class="modal-close" id="modalClose" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" data-close-modal>关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const stateBox = {
+    state: null,
+    editorRows: [],
+    editorScheme: "",
+  };
+
+  const esc = (value) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const fmtCents = (cents) =>
+    "¥" + (Number(cents || 0) / 100).toLocaleString("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+  const shortKey = (key) => (key ? esc(key.slice(0, 11)) + "…" : "—");
+
+  let toastTimer = null;
+  function toast(message, kind = "ok") {
+    const box = $("#toast");
+    box.textContent = message;
+    box.className = "toast show " + kind;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { box.className = "toast " + kind; }, 4200);
+  }
+
+  class ApiError extends Error {
+    constructor(status, payload) {
+      super(payload?.error?.message || `请求失败（${status}）`);
+      this.status = status;
+      this.payload = payload || {};
+    }
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, {
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+    });
+    let payload = null;
+    try { payload = await response.json(); } catch (_) { /* empty body */ }
+    if (!response.ok) throw new ApiError(response.status, payload);
+    return payload;
+  }
+
+  // ------------------------------------------------------------- derivations
+
+  function docById(kind, id) {
+    const list = kind === "order" ? stateBox.state.orders : stateBox.state.invoices;
+    return list.find((doc) => doc.id === id) || null;
+  }
+
+  function schemeById(schemeId) {
+    return stateBox.state.schemes.find((scheme) => scheme.scheme_id === schemeId) || null;
+  }
+
+  // Own-scheme usage is released before validation, so a row may use up to
+  // remaining + what this scheme already booked on that document.
+  function availableFor(kind, id) {
+    const doc = docById(kind, id);
+    if (!doc) return 0;
+    const scheme = schemeById(stateBox.editorScheme);
+    let own = 0;
+    if (scheme) {
+      for (const entry of scheme.entries) {
+        if ((kind === "order" ? entry.order_id : entry.invoice_id) === id) own += entry.amount_cents;
+      }
+    }
+    return doc.remaining_cents + own;
+  }
+
+  // ---------------------------------------------------------------- rendering
+
+  function renderStats() {
+    const stats = stateBox.state.stats;
+    $("#stats").innerHTML = [
+      ["订单总额", fmtCents(stats.order_total_cents), `${stats.orders} 张订单`],
+      ["发票总额", fmtCents(stats.invoice_total_cents), `${stats.invoices} 张发票`],
+      ["已核销金额", fmtCents(stats.written_off_cents), `${stats.entries} 条明细`],
+      ["未开票采购金额", fmtCents(stats.uninvoiced_cents), "订单余额合计"],
+      ["核销方案", stats.schemes, "整批替换 / 可清空"],
+    ].map(([label, value, note]) => `
+      <div class="stat">
+        <div class="label">${label}</div>
+        <div class="value">${value}<small>${esc(note)}</small></div>
+      </div>
+    `).join("");
+  }
+
+  function orderOptions(selected) {
+    return stateBox.state.orders.map((doc) =>
+      `<option value="${esc(doc.id)}" ${doc.id === selected ? "selected" : ""}>${esc(doc.id)} ｜ ${esc(doc.record.name)} ｜ 余额 ${fmtCents(doc.remaining_cents)}</option>`
+    ).join("");
+  }
+
+  function invoiceOptions(selected) {
+    return stateBox.state.invoices.map((doc) =>
+      `<option value="${esc(doc.id)}" ${doc.id === selected ? "selected" : ""}>${esc(doc.id)} ｜ ${esc(doc.record.name)} ｜ 余额 ${fmtCents(doc.remaining_cents)}</option>`
+    ).join("");
+  }
+
+  function rowHint(row) {
+    if (!row.order_id || !row.invoice_id) return "";
+    const order = docById("order", row.order_id);
+    const invoice = docById("invoice", row.invoice_id);
+    if (!order || !invoice) return "";
+    if (order.group !== invoice.group) {
+      return `<div class="row-hint bad">✕ 双方供应商当前不在同一分组（${esc(order.record.name)} / ${esc(invoice.record.name)}），保存将被拒绝；请先在审校首页归并分组。</div>`;
+    }
+    const orderAvail = availableFor("order", row.order_id);
+    const invoiceAvail = availableFor("invoice", row.invoice_id);
+    const cap = Math.min(orderAvail, invoiceAvail);
+    const amount = Number(row.amount_cents) || 0;
+    const over = amount > cap;
+    return `<div class="row-hint ${over ? "bad" : "good"}">✓ 同组（${esc(order.record.name === invoice.record.name ? order.record.name : order.record.name + " / " + invoice.record.name)}）｜ 本方案可申请上限 ${fmtCents(cap)}（订单余 ${fmtCents(orderAvail)}，发票余 ${fmtCents(invoiceAvail)}）${over ? "，当前金额超限" : ""}</div>`;
+  }
+
+  function renderEditor() {
+    const scheme = schemeById(stateBox.editorScheme);
+    $("#editorStatus").textContent = stateBox.editorScheme
+      ? (scheme ? `编辑已有方案 · ${scheme.entry_count} 条已保存` : "新方案（尚未保存）")
+      : "未选择方案";
+    $("#schemeList").innerHTML = stateBox.state.schemes.map((item) =>
+      `<option value="${esc(item.scheme_id)}">${item.entry_count} 条明细 · ${fmtCents(item.total_cents)}</option>`
+    ).join("");
+
+    const body = $("#entryBody");
+    if (!stateBox.editorRows.length) {
+      body.innerHTML = `<tr><td colspan="4"><div class="empty">暂无明细行。点击“＋ 添加明细”开始编辑，或载入已有方案。</div></td></tr>`;
+    } else {
+      body.innerHTML = stateBox.editorRows.map((row, index) => `
+        <tr>
+          <td>
+            <select data-row="${index}" data-field="order_id">${orderOptions(row.order_id)}</select>
+          </td>
+          <td>
+            <select data-row="${index}" data-field="invoice_id">${invoiceOptions(row.invoice_id)}</select>
+            ${rowHint(row)}
+          </td>
+          <td>
+            <input type="number" min="1" step="1" placeholder="正整数，单位：分"
+              value="${row.amount_cents === "" ? "" : Number(row.amount_cents)}"
+              data-row="${index}" data-field="amount_cents">
+          </td>
+          <td><button class="tiny-btn" data-remove-row="${index}">删除</button></td>
+        </tr>
+      `).join("");
+    }
+  }
+
+  function docRow(kind, doc) {
+    const usedPct = doc.amount_cents > 0 ? Math.round((doc.used_cents / doc.amount_cents) * 100) : 0;
+    const full = doc.remaining_cents === 0;
+    return `<tr>
+      <td><span class="mono small">${esc(doc.id)}</span></td>
+      <td>
+        <div>${esc(doc.record.name)}</div>
+        <div class="muted small">${esc(doc.record.source)} ${esc(doc.record.source_code)} · 分组 ${shortKey(doc.group)}</div>
+      </td>
+      <td class="num">${fmtCents(doc.amount_cents)}</td>
+      <td class="num">
+        <div>${fmtCents(doc.used_cents)}</div>
+        <div class="balance-bar ${full ? "full" : ""}" title="已核销 ${usedPct}%"><span style="width:${usedPct}%"></span></div>
+      </td>
+      <td class="num"><b>${fmtCents(doc.remaining_cents)}</b></td>
+      <td><button class="tiny-btn" data-doc-kind="${kind}" data-doc-id="${esc(doc.id)}">明细</button></td>
+    </tr>`;
+  }
+
+  function renderDocuments() {
+    const orders = stateBox.state.orders;
+    const invoices = stateBox.state.invoices;
+    $("#docCount").textContent = `${orders.length} 张订单 · ${invoices.length} 张发票`;
+    $("#orderCount").textContent = `${orders.length} 张`;
+    $("#invoiceCount").textContent = `${invoices.length} 张`;
+    $("#orderBody").innerHTML = orders.map((doc) => docRow("order", doc)).join("");
+    $("#invoiceBody").innerHTML = invoices.map((doc) => docRow("invoice", doc)).join("");
+  }
+
+  function renderSchemes() {
+    const schemes = stateBox.state.schemes;
+    $("#schemeCount").textContent = `${schemes.length} 个方案`;
+    $("#noSchemes").hidden = schemes.length > 0;
+    $("#schemeGrid").innerHTML = schemes.map((scheme) => `
+      <div class="scheme-card">
+        <div class="scheme-head">
+          <b>${esc(scheme.scheme_id)}</b>
+          <span class="pill info">${scheme.entry_count} 条 · ${fmtCents(scheme.total_cents)}</span>
+        </div>
+        <div class="scheme-meta">更新于 ${esc((scheme.updated_at || "").replace("T", " ").replace("+00:00", " UTC"))}</div>
+        <ul class="scheme-entries">
+          ${scheme.entries.map((entry) => `
+            <li>
+              <span class="mono small">${esc(entry.order_id)}</span>
+              <span class="muted">×</span>
+              <span class="mono small">${esc(entry.invoice_id)}</span>
+              <b>${fmtCents(entry.amount_cents)}</b>
+              ${entry.same_group
+                ? `<span class="pill same">同组</span>`
+                : `<span class="pill diff">跨组!</span>`}
+            </li>`).join("")}
+        </ul>
+        <div class="scheme-actions">
+          <button class="tiny-btn" data-load-scheme="${esc(scheme.scheme_id)}">载入编辑</button>
+          <button class="tiny-btn" data-clear-scheme="${esc(scheme.scheme_id)}">清空方案</button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function renderAll() {
+    if (!stateBox.state) return;
+    $("#loading").hidden = true;
+    $("#app").hidden = false;
+    $("#instance").textContent = stateBox.state.instance || "—";
+    renderStats();
+    renderEditor();
+    renderDocuments();
+    renderSchemes();
+  }
+
+  // -------------------------------------------------------------- doc modal
+
+  function openDocModal(kind, docId) {
+    const doc = docById(kind, docId);
+    if (!doc) return;
+    const otherKind = kind === "order" ? "invoice" : "order";
+    const entries = [];
+    for (const scheme of stateBox.state.schemes) {
+      for (const entry of scheme.entries) {
+        if ((kind === "order" ? entry.order_id : entry.invoice_id) === docId) {
+          entries.push({ scheme_id: scheme.scheme_id, ...entry });
+        }
+      }
+    }
+    $("#modalEyebrow").textContent = kind === "order" ? "采购订单 · 按单明细" : "发票 · 按单明细";
+    $("#modalTitle").textContent = `${doc.id} ｜ ${doc.record.name}`;
+    $("#modalBody").innerHTML = `
+      <div class="doc-summary">
+        <div class="cell"><div class="k">单据金额</div><div class="v">${fmtCents(doc.amount_cents)}</div></div>
+        <div class="cell"><div class="k">已核销（全部方案）</div><div class="v">${fmtCents(doc.used_cents)}</div></div>
+        <div class="cell"><div class="k">余额</div><div class="v">${fmtCents(doc.remaining_cents)}</div></div>
+      </div>
+      <div class="muted small" style="margin-bottom:10px">
+        供应商：${esc(doc.record.source)} ${esc(doc.record.source_code)} ${esc(doc.record.name)} · 当前分组 <span class="mono">${esc(doc.group)}</span>
+      </div>
+      ${entries.length ? `
+        <table class="data">
+          <thead><tr><th>方案</th><th>对方单据</th><th>对方供应商</th><th class="num">核销金额</th></tr></thead>
+          <tbody>${entries.map((entry) => {
+            const otherId = kind === "order" ? entry.invoice_id : entry.order_id;
+            const other = docById(otherKind, otherId);
+            return `<tr>
+              <td><span class="pill info">${esc(entry.scheme_id)}</span></td>
+              <td><span class="mono small">${esc(otherId)}</span></td>
+              <td>${other ? esc(other.record.name) : "—"}</td>
+              <td class="num"><b>${fmtCents(entry.amount_cents)}</b></td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table>`
+      : `<div class="empty">该单据暂无核销明细。</div>`}
+    `;
+    $("#overlay").hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeModal() {
+    $("#overlay").hidden = true;
+    document.body.style.overflow = "";
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  async function loadState({ silent = false } = {}) {
+    try {
+      const payload = await api("/api/writeoffs/state");
+      stateBox.state = payload.state;
+      renderAll();
+      if (!silent) toast(`已刷新 · 由进程 ${payload.state.instance} 响应`);
+    } catch (error) {
+      if (!silent) toast(error.message || "读取状态失败", "error");
+      $("#loading").textContent = "载入失败：" + (error.message || "未知错误");
+    }
+  }
+
+  function showEditorError(error) {
+    const box = $("#editorError");
+    if (!error) { box.hidden = true; box.innerHTML = ""; return; }
+    const payload = error.payload?.error || {};
+    box.hidden = false;
+    box.innerHTML = `<b>保存被拒绝，原方案未改变。</b> ${esc(error.message)}
+      ${payload.code ? `<div class="code">${esc(payload.code)}</div>` : ""}`;
+  }
+
+  function collectEntries() {
+    return stateBox.editorRows
+      .filter((row) => row.order_id && row.invoice_id && Number(row.amount_cents) > 0)
+      .map((row) => ({
+        order_id: row.order_id,
+        invoice_id: row.invoice_id,
+        amount_cents: Math.trunc(Number(row.amount_cents)),
+      }));
+  }
+
+  async function saveScheme() {
+    const schemeId = $("#schemeId").value.trim();
+    if (!schemeId) { toast("请先填写方案 ID。", "error"); $("#schemeId").focus(); return; }
+    stateBox.editorScheme = schemeId;
+    if (!stateBox.editorRows.length) {
+      toast("明细为空：如需清空方案请使用“清空该方案”按钮。", "error");
+      return;
+    }
+    const invalidRow = stateBox.editorRows.some((row) => {
+      const amount = Number(row.amount_cents);
+      return !row.order_id || !row.invoice_id || !Number.isInteger(amount) || amount <= 0;
+    });
+    if (invalidRow) {
+      toast("每行都需选择订单、发票，并填写正整数分金额。", "error");
+      return;
+    }
+    const entries = collectEntries();
+    const button = $("#saveSchemeBtn");
+    button.disabled = true;
+    try {
+      const payload = await api(`/api/schemes/${encodeURIComponent(schemeId)}/writeoffs`, {
+        method: "PUT",
+        body: JSON.stringify({ entries }),
+      });
+      stateBox.state = payload.state;
+      showEditorError(null);
+      renderAll();
+      toast(`${payload.summary} 由进程 ${payload.state.instance} 保存。`, "ok");
+    } catch (error) {
+      showEditorError(error);
+      toast(error.message || "保存失败，原方案未改变。", "error");
+      await loadState({ silent: true });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function clearScheme(schemeId) {
+    const target = (schemeId || $("#schemeId").value || "").trim();
+    if (!target) { toast("请先填写要清空的方案 ID。", "error"); return; }
+    if (!window.confirm(`确定清空方案「${target}」的全部核销明细？该操作会整批删除，但可与保存一样原子回滚。`)) return;
+    try {
+      const payload = await api(`/api/schemes/${encodeURIComponent(target)}/writeoffs`, {
+        method: "PUT",
+        body: JSON.stringify({ entries: [] }),
+      });
+      stateBox.state = payload.state;
+      if (stateBox.editorScheme === target) stateBox.editorRows = [];
+      showEditorError(null);
+      renderAll();
+      toast(`${payload.summary} 由进程 ${payload.state.instance} 保存。`, "ok");
+    } catch (error) {
+      toast(error.message || "清空失败，原方案未改变。", "error");
+      await loadState({ silent: true });
+    }
+  }
+
+  function loadSchemeIntoEditor(schemeId) {
+    const scheme = schemeById(schemeId);
+    stateBox.editorScheme = schemeId;
+    $("#schemeId").value = schemeId;
+    stateBox.editorRows = scheme
+      ? scheme.entries.map((entry) => ({
+          order_id: entry.order_id,
+          invoice_id: entry.invoice_id,
+          amount_cents: entry.amount_cents,
+        }))
+      : [];
+    showEditorError(null);
+    renderEditor();
+    if (!scheme) toast(`方案「${schemeId}」当前没有已保存明细，可作为新方案编辑。`);
+  }
+
+  // ------------------------------------------------------------------- events
+
+  $("#refreshBtn").addEventListener("click", () => loadState());
+  $("#modalClose").addEventListener("click", closeModal);
+  $("#overlay").addEventListener("click", (event) => {
+    if (event.target === $("#overlay")) closeModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("#overlay").hidden) closeModal();
+  });
+
+  $("#addRowBtn").addEventListener("click", () => {
+    const firstOrder = stateBox.state.orders[0]?.id || "";
+    const firstInvoice = stateBox.state.invoices[0]?.id || "";
+    stateBox.editorRows.push({ order_id: firstOrder, invoice_id: firstInvoice, amount_cents: "" });
+    renderEditor();
+  });
+
+  $("#newSchemeBtn").addEventListener("click", () => {
+    stateBox.editorScheme = "";
+    stateBox.editorRows = [];
+    $("#schemeId").value = "";
+    showEditorError(null);
+    renderEditor();
+    $("#schemeId").focus();
+  });
+
+  $("#loadSchemeBtn").addEventListener("click", () => {
+    const schemeId = $("#schemeId").value.trim();
+    if (!schemeId) { toast("请先填写或选择方案 ID。", "error"); return; }
+    loadSchemeIntoEditor(schemeId);
+  });
+
+  $("#saveSchemeBtn").addEventListener("click", saveScheme);
+  $("#clearSchemeBtn").addEventListener("click", () => clearScheme());
+
+  document.addEventListener("change", (event) => {
+    const field = event.target.getAttribute("data-field");
+    if (!field) return;
+    const index = Number(event.target.getAttribute("data-row"));
+    const row = stateBox.editorRows[index];
+    if (!row) return;
+    row[field] = event.target.value;
+    renderEditor();
+  });
+
+  document.addEventListener("input", (event) => {
+    if (event.target.getAttribute("data-field") === "amount_cents") {
+      const index = Number(event.target.getAttribute("data-row"));
+      const row = stateBox.editorRows[index];
+      if (row) row.amount_cents = event.target.value;
+    }
+    if (event.target.id === "schemeId") {
+      stateBox.editorScheme = event.target.value.trim();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove-row]");
+    if (remove) {
+      stateBox.editorRows.splice(Number(remove.getAttribute("data-remove-row")), 1);
+      renderEditor();
+      return;
+    }
+    const docButton = event.target.closest("[data-doc-kind]");
+    if (docButton) {
+      openDocModal(docButton.getAttribute("data-doc-kind"), docButton.getAttribute("data-doc-id"));
+      return;
+    }
+    const loadScheme = event.target.closest("[data-load-scheme]");
+    if (loadScheme) {
+      loadSchemeIntoEditor(loadScheme.getAttribute("data-load-scheme"));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const clearBtn = event.target.closest("[data-clear-scheme]");
+    if (clearBtn) {
+      clearScheme(clearBtn.getAttribute("data-clear-scheme"));
+      return;
+    }
+    if (event.target.closest("[data-close-modal]")) closeModal();
+  });
+
+  loadState({ silent: true });
+})();
+</script>
+</body>
+</html>

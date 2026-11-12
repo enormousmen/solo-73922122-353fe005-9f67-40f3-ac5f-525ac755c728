@@ -22,6 +22,20 @@ SEED = """来源,源编号,企业名称
 采购系统A,A-005,戊企业
 """
 
+# Small ERP document fixture so the review tests also exercise doc seeding.
+DOCS = json.dumps(
+    {
+        "orders": [
+            {"order_id": "PO-1", "record_id": 1, "amount_cents": 10000},
+            {"order_id": "PO-2", "record_id": 3, "amount_cents": 20000},
+        ],
+        "invoices": [
+            {"invoice_id": "INV-1", "record_id": 2, "amount_cents": 5000},
+            {"invoice_id": "INV-2", "record_id": 4, "amount_cents": 7000},
+        ],
+    }
+)
+
 # Convenient ids from the seed above.
 A1, B1 = 1, 2   # 甲企业
 A2, B2 = 3, 4   # 乙企业
@@ -38,8 +52,17 @@ def paths(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def make_client(db_path: Path, csv_path: Path, instance: str = "test") -> TestClient:
+    docs_path = db_path.parent / "erp_documents.json"
+    if not docs_path.exists():
+        docs_path.write_text(DOCS, encoding="utf-8")
     return TestClient(
-        create_app(db_path=db_path, seed_csv=csv_path, seed_limit=100, instance=instance)
+        create_app(
+            db_path=db_path,
+            seed_csv=csv_path,
+            seed_limit=100,
+            instance=instance,
+            seed_docs=docs_path,
+        )
     )
 
 

@@ -6,6 +6,8 @@ x-app-common: &app-common
     DB_PATH: /data/review.db
     SEED_CSV: /app/data/suppliers.csv
     SEED_LIMIT: "100"
+    SEED_DOCS: /app/data/erp_documents.json
+    SEED_DOCS_LIMIT: "20"
   volumes:
     - review-db:/data
   healthcheck:
@@ -27,6 +29,8 @@ services:
       DB_PATH: /data/review.db
       SEED_CSV: /app/data/suppliers.csv
       SEED_LIMIT: "100"
+      SEED_DOCS: /app/data/erp_documents.json
+      SEED_DOCS_LIMIT: "20"
       APP_INSTANCE: app1
 
   app2:
@@ -35,6 +39,8 @@ services:
       DB_PATH: /data/review.db
       SEED_CSV: /app/data/suppliers.csv
       SEED_LIMIT: "100"
+      SEED_DOCS: /app/data/erp_documents.json
+      SEED_DOCS_LIMIT: "20"
       APP_INSTANCE: app2
 
   gateway:

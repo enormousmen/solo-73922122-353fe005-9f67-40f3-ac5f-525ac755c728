@@ -1,12 +1,14 @@
-"""SQLite persistence, schema and one-time CSV seeding.
+"""SQLite persistence, schema and one-time CSV/JSON seeding.
 
 Records are immutable after the first import: the API never exposes a write
 path for them and SQLite triggers reject UPDATE/DELETE on the records table.
+The same holds for the ERP orders/invoices loaded once from the bundled JSON.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 import os
 import sqlite3
 import time
@@ -17,6 +19,8 @@ from typing import Iterator, Sequence
 DEFAULT_DB_PATH = os.environ.get("DB_PATH", "./data/review.db")
 DEFAULT_SEED_CSV = os.environ.get("SEED_CSV", "./data/suppliers.csv")
 DEFAULT_SEED_LIMIT = int(os.environ.get("SEED_LIMIT", "100"))
+DEFAULT_SEED_DOCS = os.environ.get("SEED_DOCS", "./data/erp_documents.json")
+DEFAULT_SEED_DOCS_LIMIT = int(os.environ.get("SEED_DOCS_LIMIT", "20"))
 
 SCHEMA_STATEMENTS: Sequence[str] = (
     """
@@ -71,6 +75,40 @@ SCHEMA_STATEMENTS: Sequence[str] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS erp_orders (
+        id           TEXT PRIMARY KEY,
+        seq          INTEGER NOT NULL,
+        record_id    INTEGER NOT NULL REFERENCES records(id),
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS erp_invoices (
+        id           TEXT PRIMARY KEY,
+        seq          INTEGER NOT NULL,
+        record_id    INTEGER NOT NULL REFERENCES records(id),
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS schemes (
+        scheme_id  TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS writeoffs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        scheme_id    TEXT NOT NULL REFERENCES schemes(scheme_id) ON DELETE CASCADE,
+        order_id     TEXT NOT NULL REFERENCES erp_orders(id),
+        invoice_id   TEXT NOT NULL REFERENCES erp_invoices(id),
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+        created_at   TEXT NOT NULL,
+        UNIQUE (scheme_id, order_id, invoice_id)
+    )
+    """,
+    """
     CREATE TRIGGER IF NOT EXISTS records_are_immutable_update
     BEFORE UPDATE ON records
     BEGIN
@@ -82,6 +120,34 @@ SCHEMA_STATEMENTS: Sequence[str] = (
     BEFORE DELETE ON records
     BEGIN
         SELECT RAISE(ABORT, 'records are immutable');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS erp_orders_are_immutable_update
+    BEFORE UPDATE ON erp_orders
+    BEGIN
+        SELECT RAISE(ABORT, 'erp_orders are immutable');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS erp_orders_are_immutable_delete
+    BEFORE DELETE ON erp_orders
+    BEGIN
+        SELECT RAISE(ABORT, 'erp_orders are immutable');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS erp_invoices_are_immutable_update
+    BEFORE UPDATE ON erp_invoices
+    BEGIN
+        SELECT RAISE(ABORT, 'erp_invoices are immutable');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS erp_invoices_are_immutable_delete
+    BEFORE DELETE ON erp_invoices
+    BEGIN
+        SELECT RAISE(ABORT, 'erp_invoices are immutable');
     END
     """,
 )
@@ -199,16 +265,88 @@ def _read_seed_rows(csv_path: str | os.PathLike[str], limit: int) -> list[dict[s
     return rows
 
 
+def _is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _read_seed_docs(
+    json_path: str | os.PathLike[str], limit: int
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Read orders/invoices from the bundled JSON, at most ``limit`` of each.
+
+    Every document carries its document id, the supplier's original record id
+    and a positive integer amount in cents.  The file is strict-validated so a
+    malformed seed fails loudly at startup instead of silently seeding less.
+    """
+    path = Path(json_path)
+    if not path.exists():
+        raise RuntimeError(f"seed documents JSON not found: {path}")
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"seed documents JSON is invalid: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"seed documents JSON must be an object: {path}")
+
+    def read_kind(kind: str, id_field: str) -> list[dict[str, object]]:
+        raw_list = payload.get(kind)
+        if not isinstance(raw_list, list):
+            raise RuntimeError(f"seed documents JSON is missing a list '{kind}': {path}")
+        docs: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for index, raw in enumerate(raw_list):
+            where = f"{kind}[{index}]"
+            if not isinstance(raw, dict):
+                raise RuntimeError(f"{where} in {path} must be an object")
+            doc_id = raw.get(id_field)
+            record_id = raw.get("record_id")
+            amount = raw.get("amount_cents")
+            if not isinstance(doc_id, str) or not doc_id.strip():
+                raise RuntimeError(f"{where} in {path} has an invalid {id_field}")
+            doc_id = doc_id.strip()
+            if doc_id in seen_ids:
+                raise RuntimeError(f"{where} in {path} duplicates id {doc_id!r}")
+            if isinstance(record_id, bool) or not isinstance(record_id, int):
+                raise RuntimeError(f"{where} in {path} has an invalid record_id")
+            if not _is_positive_int(amount):
+                raise RuntimeError(
+                    f"{where} in {path} must have a positive integer amount_cents"
+                )
+            seen_ids.add(doc_id)
+            docs.append(
+                {
+                    "seq": len(docs) + 1,
+                    "id": doc_id,
+                    "record_id": record_id,
+                    "amount_cents": amount,
+                }
+            )
+            if len(docs) >= limit:
+                break
+        return docs
+
+    orders = read_kind("orders", "order_id")
+    invoices = read_kind("invoices", "invoice_id")
+    if not orders and not invoices:
+        raise RuntimeError(f"seed documents JSON has no orders or invoices: {path}")
+    return orders, invoices
+
+
 def init_and_seed(
     db_path: str | os.PathLike[str],
     csv_path: str | os.PathLike[str],
     seed_limit: int,
     canonical_group_builder=None,
+    docs_path: str | os.PathLike[str] | None = None,
+    docs_limit: int = DEFAULT_SEED_DOCS_LIMIT,
 ) -> dict[str, object]:
     """Create the schema, seed once, and canonicalise persisted groups.
 
     The whole operation is one IMMEDIATE transaction so two web processes
-    starting at the same time cannot double-seed the CSV.
+    starting at the same time cannot double-seed the CSV or the ERP documents.
+    Documents are seeded only when ``docs_path`` is given and the file exists;
+    an already-populated documents table is never touched again.
     """
     conn = connect(db_path)
     try:
@@ -235,6 +373,44 @@ def init_and_seed(
                 seeded = len(rows)
                 existing = len(rows)
 
+            docs_seeded = {"orders": 0, "invoices": 0}
+            docs_present = int(
+                conn.execute("SELECT COUNT(*) FROM erp_orders").fetchone()[0]
+            ) + int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+            if docs_present == 0 and docs_path is not None and Path(docs_path).exists():
+                orders, invoices = _read_seed_docs(docs_path, docs_limit)
+                known_records = {
+                    int(row[0]) for row in conn.execute("SELECT id FROM records")
+                }
+                for kind, docs in (("order", orders), ("invoice", invoices)):
+                    for doc in docs:
+                        if int(doc["record_id"]) not in known_records:
+                            raise RuntimeError(
+                                f"seed documents JSON references unknown "
+                                f"record_id {doc['record_id']} ({kind} {doc['id']!r})"
+                            )
+                conn.executemany(
+                    "INSERT INTO erp_orders (id, seq, record_id, amount_cents) "
+                    "VALUES (?, ?, ?, ?)",
+                    [
+                        (d["id"], d["seq"], d["record_id"], d["amount_cents"])
+                        for d in orders
+                    ],
+                )
+                conn.executemany(
+                    "INSERT INTO erp_invoices (id, seq, record_id, amount_cents) "
+                    "VALUES (?, ?, ?, ?)",
+                    [
+                        (d["id"], d["seq"], d["record_id"], d["amount_cents"])
+                        for d in invoices
+                    ],
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('seed_docs', ?)",
+                    (str(Path(docs_path).resolve()),),
+                )
+                docs_seeded = {"orders": len(orders), "invoices": len(invoices)}
+
             if canonical_group_builder is not None and existing:
                 record_rows = conn.execute("SELECT id FROM records ORDER BY id").fetchall()
                 decision_rows = conn.execute(
@@ -259,6 +435,7 @@ def init_and_seed(
         return {
             "records": existing,
             "seeded_now": seeded,
+            "documents": docs_seeded,
             "db_path": str(Path(db_path).resolve()),
         }
     finally:

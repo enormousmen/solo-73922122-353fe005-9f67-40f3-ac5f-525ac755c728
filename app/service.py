@@ -7,10 +7,10 @@ import json
 import sqlite3
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from . import db
+from . import db, writeoff
+from .common import ApiProblem, utc_now
 from .grouping import (
     REL_DIFF,
     REL_SAME,
@@ -25,25 +25,6 @@ from .grouping import (
 PREVIEW_PENDING = "pending"
 PREVIEW_CONFIRMED = "confirmed"
 PREVIEW_STALE = "stale"
-
-
-class ApiProblem(Exception):
-    def __init__(self, status: int, code: str, message: str, **extra: Any) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-        self.extra = extra
-
-    def body(self) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "error": {"code": self.code, "message": self.message, **self.extra},
-        }
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def normalize_pair(left: int, right: int) -> tuple[int, int]:
@@ -250,6 +231,38 @@ def _conflict(
     if extra:
         payload.update(extra)
     return payload
+
+
+def _writeoff_crossing_conflict(
+    conn: sqlite3.Connection, grouping: Grouping
+) -> dict[str, Any] | None:
+    """Conflict payload if the proposed grouping tears write-offs apart.
+
+    Both the relation-change preview and its confirmation run this check
+    against the grouping that would result: any existing write-off whose
+    order-side and invoice-side suppliers would land in different groups
+    blocks the change and names the schemes involved.
+    """
+    crossing = writeoff.cross_group_entries(
+        grouping,
+        writeoff.load_orders(conn),
+        writeoff.load_invoices(conn),
+        writeoff.load_writeoffs(conn),
+    )
+    if not crossing:
+        return None
+    schemes = sorted({item["scheme_id"] for item in crossing})
+    return {
+        "code": "writeoff_crosses_groups",
+        "message": (
+            f"该关系变更会使 {len(crossing)} 条已保存核销的双方供应商落入不同分组"
+            f"（涉及方案：{'、'.join(schemes)}）。"
+            "请先在核销页解除相关核销，再重新预览该关系变更。"
+        ),
+        "evidence": [],
+        "schemes": schemes,
+        "writeoffs": crossing,
+    }
 
 
 def build_state(conn: sqlite3.Connection, instance: str) -> dict[str, Any]:
@@ -520,6 +533,12 @@ def _create_preview(conn: sqlite3.Connection, action: dict[str, Any]) -> dict[st
                 "该操作会产生自相矛盾的分组，已拒绝。",
             )
 
+        # The proposed grouping must keep every existing write-off's two
+        # suppliers inside one group; otherwise the change is refused here.
+        writeoff_conflict = _writeoff_crossing_conflict(conn, after)
+        if writeoff_conflict is not None:
+            return _conflict_response(action, writeoff_conflict, by_id, decisions)
+
         involved_set = set(involved)
         snapshot = make_snapshot(involved_set, grouping, decisions)
         digest = snapshot_digest(snapshot)
@@ -602,6 +621,7 @@ def _conflict_response(
     action: Mapping[str, Any],
     conflict: Mapping[str, Any],
     by_id: Mapping[int, Mapping[str, Any]],
+    decisions: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     if action["kind"] == "add":
         operation = {
@@ -611,7 +631,18 @@ def _conflict_response(
             "record_b": record_brief(by_id[int(action["record_b"])]),
         }
     else:
-        operation = {"kind": "withdraw", "decision": None}
+        decision = next(
+            (
+                item
+                for item in decisions
+                if int(item["id"]) == int(action.get("decision_id", -1))
+            ),
+            None,
+        )
+        operation = {
+            "kind": "withdraw",
+            "decision": decision_view(decision, by_id) if decision else None,
+        }
     return {
         "ok": True,
         "preview": {
@@ -786,6 +817,55 @@ def confirm_preview(
                 "preview_id": preview_id,
             }
 
+        # Compute the would-be grouping before writing anything, so every
+        # remaining check can still refuse without touching state.
+        remaining = [
+            decision
+            for decision in decisions
+            if not (
+                action["kind"] == "withdraw"
+                and int(decision["id"]) == int(action["decision_id"])
+            )
+        ]
+        if action["kind"] == "add":
+            remaining.append(
+                {
+                    "id": None,
+                    "record_a": normalize_pair(
+                        int(action["record_a"]), int(action["record_b"])
+                    )[0],
+                    "record_b": normalize_pair(
+                        int(action["record_a"]), int(action["record_b"])
+                    )[1],
+                    "relation": action["relation"],
+                }
+            )
+        final_grouping = build_grouping(list(by_id), remaining)
+        broken = invalid_diff_decisions(remaining, final_grouping)
+        if broken:
+            raise ApiProblem(
+                500,
+                "inconsistent_operation",
+                "保存时检测到分组自相矛盾，已回滚。",
+            )
+
+        # Re-check the proposed grouping against the current write-offs: a
+        # write-off saved after the preview must still block this change.
+        # The preview stays pending so it can be confirmed once the blocking
+        # write-offs are released.
+        writeoff_conflict = _writeoff_crossing_conflict(conn, final_grouping)
+        if writeoff_conflict is not None:
+            return 409, {
+                "ok": False,
+                "error": {
+                    "code": writeoff_conflict["code"],
+                    "message": writeoff_conflict["message"],
+                    "schemes": writeoff_conflict["schemes"],
+                    "writeoffs": writeoff_conflict["writeoffs"],
+                },
+                "preview_id": preview_id,
+            }
+
         applied: dict[str, Any]
         if action["kind"] == "add":
             left, right = int(action["record_a"]), int(action["record_b"])
@@ -824,36 +904,6 @@ def confirm_preview(
             summary = "已撤回该判定；其余判定继续生效，分组已更新。"
 
         applied["summary"] = summary
-
-        remaining = [
-            decision
-            for decision in decisions
-            if not (
-                action["kind"] == "withdraw"
-                and int(decision["id"]) == int(action["decision_id"])
-            )
-        ]
-        if action["kind"] == "add":
-            remaining.append(
-                {
-                    "id": None,
-                    "record_a": normalize_pair(
-                        int(action["record_a"]), int(action["record_b"])
-                    )[0],
-                    "record_b": normalize_pair(
-                        int(action["record_a"]), int(action["record_b"])
-                    )[1],
-                    "relation": action["relation"],
-                }
-            )
-        final_grouping = build_grouping(list(by_id), remaining)
-        broken = invalid_diff_decisions(remaining, final_grouping)
-        if broken:
-            raise ApiProblem(
-                500,
-                "inconsistent_operation",
-                "保存时检测到分组自相矛盾，已回滚。",
-            )
 
         stamp = utc_now()
         conn.execute("DELETE FROM group_members")

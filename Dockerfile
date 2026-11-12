@@ -4,7 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DB_PATH=/data/review.db \
     SEED_CSV=/app/data/suppliers.csv \
-    SEED_LIMIT=100
+    SEED_LIMIT=100 \
+    SEED_DOCS=/app/data/erp_documents.json \
+    SEED_DOCS_LIMIT=20
 
 WORKDIR /app
 

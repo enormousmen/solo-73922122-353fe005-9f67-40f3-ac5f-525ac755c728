@@ -4,13 +4,13 @@ import os
 import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
-from . import db, service
+from . import db, service, writeoff
 from .grouping import build_grouping
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -29,16 +29,32 @@ class ConfirmRequest(BaseModel):
     snapshot_digest: Optional[str] = None
 
 
+class WriteoffEntry(BaseModel):
+    order_id: str = Field(min_length=1, max_length=100)
+    invoice_id: str = Field(min_length=1, max_length=100)
+    amount_cents: StrictInt = Field(gt=0)
+
+
+class WriteoffBatch(BaseModel):
+    entries: list[WriteoffEntry] = Field(default_factory=list)
+
+
 def create_app(
     db_path: str | os.PathLike[str] | None = None,
     seed_csv: str | os.PathLike[str] | None = None,
     seed_limit: int | None = None,
     instance: str | None = None,
+    seed_docs: str | os.PathLike[str] | None = None,
+    seed_docs_limit: int | None = None,
 ) -> FastAPI:
     resolved_db = str(db_path or db.DEFAULT_DB_PATH)
     resolved_csv = str(seed_csv or db.DEFAULT_SEED_CSV)
     resolved_limit = int(seed_limit if seed_limit is not None else db.DEFAULT_SEED_LIMIT)
     resolved_instance = instance or DEFAULT_INSTANCE
+    resolved_docs = str(seed_docs) if seed_docs is not None else db.DEFAULT_SEED_DOCS
+    resolved_docs_limit = int(
+        seed_docs_limit if seed_docs_limit is not None else db.DEFAULT_SEED_DOCS_LIMIT
+    )
 
     Path(resolved_db).parent.mkdir(parents=True, exist_ok=True)
 
@@ -49,6 +65,8 @@ def create_app(
             resolved_csv,
             resolved_limit,
             canonical_group_builder=build_grouping,
+            docs_path=resolved_docs,
+            docs_limit=resolved_docs_limit,
         )
         app.state.init_info = info
         yield
@@ -82,6 +100,10 @@ def create_app(
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/writeoffs", include_in_schema=False)
+    def writeoffs_page():
+        return FileResponse(STATIC_DIR / "writeoffs.html")
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon():
@@ -143,6 +165,20 @@ def create_app(
     @app.post("/api/previews/{preview_id}/cancel")
     def api_cancel(preview_id: str, conn=Depends(get_conn)):
         return service.cancel_preview(conn, preview_id)
+
+    @app.get("/api/writeoffs/state")
+    def api_writeoff_state(conn=Depends(get_conn)):
+        return {"ok": True, "state": writeoff.build_state(conn, resolved_instance)}
+
+    @app.put("/api/schemes/{scheme_id}/writeoffs")
+    def api_replace_writeoffs(
+        scheme_id: str, body: WriteoffBatch, conn=Depends(get_conn)
+    ):
+        result = writeoff.replace_scheme_writeoffs(
+            conn, scheme_id, [entry.model_dump() for entry in body.entries]
+        )
+        result["state"] = writeoff.build_state(conn, resolved_instance)
+        return result
 
     return app
 
